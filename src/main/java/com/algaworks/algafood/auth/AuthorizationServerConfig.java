@@ -3,6 +3,7 @@ package com.algaworks.algafood.auth;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -13,8 +14,13 @@ import org.springframework.security.oauth2.config.annotation.web.configurers.Aut
 import org.springframework.security.oauth2.config.annotation.web.configurers.AuthorizationServerSecurityConfigurer;
 import org.springframework.security.oauth2.provider.CompositeTokenGranter;
 import org.springframework.security.oauth2.provider.TokenGranter;
+import org.springframework.security.oauth2.provider.approval.ApprovalStore;
+import org.springframework.security.oauth2.provider.approval.TokenApprovalStore;
+import org.springframework.security.oauth2.provider.token.TokenStore;
 import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
+import org.springframework.security.oauth2.provider.token.store.KeyStoreKeyFactory;
 
+import java.security.KeyPair;
 import java.util.Arrays;
 
 @Configuration
@@ -29,6 +35,9 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 	
 	@Autowired
 	private UserDetailsService userDetailsService;
+
+	@Autowired
+	private JwtKeyStoreProperties jwtKeyStoreProperties;
 	
 	@Override
 	public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
@@ -69,6 +78,7 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 	public void configure(AuthorizationServerSecurityConfigurer security) throws Exception {
 //		security.checkTokenAccess("isAuthenticated()");
 		security.checkTokenAccess("permitAll()")
+				.tokenKeyAccess("permitAll()")			//Permite chave assimétrica
 			.allowFormAuthenticationForClients();
 	}
 	
@@ -79,15 +89,31 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 			.userDetailsService(userDetailsService)
 			.reuseRefreshTokens(false)
 				.accessTokenConverter(jwtAccessTokenConverter())
+				.approvalStore(approvalStore(endpoints.getTokenStore()))
 			.tokenGranter(tokenGranter(endpoints));
 	}
 
-	@Bean		//JWT com chave simétrica
+	@Bean
 	public JwtAccessTokenConverter jwtAccessTokenConverter(){
 		JwtAccessTokenConverter jwtAccessTokenConverter = new JwtAccessTokenConverter();
 		//O algoritmo usado no SigningKey por padrão é o HmacSHA256 (chave simétrica)
-		jwtAccessTokenConverter.setSigningKey("89a7sd89f7as98f7dsa98fds7fd89sasd9898asdf98s");		//Chave secreta tbm conhecida como mac - message authenticator code
+	//	jwtAccessTokenConverter.setSigningKey("89a7sd89f7as98f7dsa98fds7fd89sasd9898asdf98s");		//Chave secreta tbm conhecida como mac - message authenticator code
+
+		ClassPathResource jksResource = new ClassPathResource(jwtKeyStoreProperties.getPath());
+		String keyStorePass = jwtKeyStoreProperties.getPassword();		//Senha para abrir o arquivo jks
+		String keyPairAlias = jwtKeyStoreProperties.getKeypairAlias();	//Dentro do arquivo jks pode conter vários pares de chaves, então especifica qual é
+
+		KeyStoreKeyFactory keyStoreKeyFactory = new KeyStoreKeyFactory(jksResource, keyStorePass.toCharArray());
+		KeyPair keyPair = keyStoreKeyFactory.getKeyPair(keyPairAlias);
+
+		jwtAccessTokenConverter.setKeyPair(keyPair);
 		return jwtAccessTokenConverter;
+	}
+
+	private ApprovalStore approvalStore(TokenStore tokenStore){
+		TokenApprovalStore approvalStore = new TokenApprovalStore();		//Permite aprovação granular dos escopos
+		approvalStore.setTokenStore(tokenStore);
+		return approvalStore;
 	}
 	
 	private TokenGranter tokenGranter(AuthorizationServerEndpointsConfigurer endpoints) {
